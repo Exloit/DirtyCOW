@@ -82,34 +82,41 @@ void *memThread (void *arg) {
  return NULL;
 }
 
-int copy (const char *src, const char *dst) {
-  if (src == NULL || dst == NULL)
-    return 1;
-  int input = 0, output = 0;
-  char *str = NULL;
-  struct stat *st = (struct stat *) malloc (sizeof (struct stat));
+size_t copyfile (const char *sfile,
+                  const char *dstfile) {
+  int sf, dst;
+  size_t sby, rd = 1024, wr = 0, bytes = 0;
+  char *buf = (char *) calloc ( 1024, sizeof (char) );
+  struct stat st;
 
-  if ((input = open (src, O_RDONLY)) < 0) {
-    return 1;
-  } else if ((output = open (dst, O_WRONLY | O_CREAT, \
-                               S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH)) < 0)
-    return 1;
-  if (fstat (input, st) < 0)
-    return 1;
-  if ((str = mmap (NULL, st->st_size, PROT_READ, \
-                     MAP_PRIVATE, input, 0)) == MAP_FAILED) {
-    return 1;
-  } else if (write (output, str, st->st_size) < st->st_size)
-    return 1;
 
-  if (munmap (str, st->st_size) < 0)
-    return 1;
+  if ( (sf = open ( sfile, O_RDONLY )) < 0 )
+    return -1;
+  else {
+    if ( fstat ( sf, &st ) < 0 ) return -1;
+    else sby = st.st_size;
+    if ( (dst = open ( dstfile,
+                 O_WRONLY | O_CREAT,
+                  st.st_mode )) < 0 )
+      return -1;
+    else {
+      for ( ;sby; bytes += wr ) {
+        if ( sby < rd )
+          rd = sby;
+        wr = read ( sf, buf, rd );
 
-  close (input);
-  close (output);
-  free (st);
+        if ( write ( dst, buf, wr ) != wr )
+          return 0;
+        else sby -= wr;
+      }
 
- return 0;
+      close ( sf );
+    }
+  }
+
+  free ( buf );
+
+ return bytes;  
 }
 
 int main (int argc, char **argv) {
